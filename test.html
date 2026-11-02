@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тесты ядра — Трекер КПД</title>
+  <style>
+    :root {
+      --bg: #0f1626;
+      --surface: #182238;
+      --text: #e6ebf5;
+      --dim: #93a0b8;
+      --ok: #34d399;
+      --ok-bg: #10291f;
+      --err: #f87171;
+      --err-bg: #2c1618;
+      --border: #253148;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px 16px 64px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      line-height: 1.45;
+    }
+
+    .wrap { max-width: 760px; margin: 0 auto; }
+
+    h1 { font-size: 22px; margin: 0 0 4px; }
+
+    .sub { color: var(--dim); font-size: 13.5px; margin: 0 0 18px; }
+
+    .summary {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      margin-bottom: 16px;
+      position: sticky;
+      top: 12px;
+      z-index: 5;
+    }
+
+    .summary__value { font-size: 26px; font-weight: 700; }
+
+    .summary--ok .summary__value { color: var(--ok); }
+    .summary--err .summary__value { color: var(--err); }
+
+    ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+
+    li {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 14px;
+    }
+
+    li.pass { border-left: 4px solid var(--ok); }
+    li.fail { border-left: 4px solid var(--err); background: var(--err-bg); }
+
+    .num {
+      font-variant-numeric: tabular-nums;
+      color: var(--dim);
+      text-align: right;
+    }
+
+    .name { font-weight: 600; }
+
+    .badge {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 1px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 999px;
+    }
+
+    .pass .badge { background: var(--ok-bg); color: var(--ok); }
+    .fail .badge { background: #3a1c1f; color: var(--err); }
+
+    ul.errors { margin: 8px 0 0; padding-left: 18px; color: var(--err); font-size: 12.5px; }
+    ul.errors li { display: list-item; border: 0; background: transparent; padding: 2px 0; }
+
+    .note { margin-top: 18px; color: var(--dim); font-size: 12.5px; }
+    code { background: #0b1220; padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Тесты ядра (core.js)</h1>
+    <p class="sub">
+      15 проверок чистой логики. Текущее время нигде не берётся из системных часов —
+      все даты передаются аргументами, поэтому результат одинаков на любом устройстве.
+    </p>
+
+    <div class="summary" id="summary">
+      <div class="summary__value" id="summary-value">—</div>
+      <div id="summary-text">Выполняю проверки…</div>
+    </div>
+
+    <ol id="list"></ol>
+
+    <p class="note">
+      Если все пункты зелёные — ядро работает корректно, и его можно переносить
+      на телефон без изменений.
+    </p>
+  </div>
+
+  <script type="module">
+    import * as core from './js/core.js';
+
+    /* ------------------------------------------------------------------ *
+     * Мини-каркас тестирования (без внешних библиотек)
+     * ------------------------------------------------------------------ */
+
+    const tests = [];
+
+    /** Регистрирует проверку. */
+    function test(name, fn) {
+      tests.push({ name, fn });
+    }
+
+    /** «Сегодня» для всех тестов — понедельник 2 ноября 2026 года. */
+    const TODAY = '2026-11-02';
+
+    /** Фабрика привычки для тестов. */
+    function habit(id, time, duration, days) {
+      return core.createHabit({ id, title: id, time, duration, days, createdAt: '2026-10-01' });
+    }
+
+    /** Сборка состояния вручную. */
+    function makeState(habits, logs = {}, settings = {}) {
+      return {
+        version: core.STATE_VERSION,
+        habits,
+        logs,
+        settings: { ...core.defaultSettings(), ...settings },
+      };
+    }
+
+    /* ------------------------------------------------------------------ *
+     * 1. Время суток: 'HH:MM' <-> минуты
+     * ------------------------------------------------------------------ */
+    test('Время: разбор и обратная сборка', ({ eq }) => {
+      eq(core.parseTimeToMinutes('00:00'), 0, 'полночь');
+      eq(core.parseTimeToMinutes('08:00'), 480, 'утро');
+      eq(core.parseTimeToMinutes('23:59'), 1439, 'последняя минута суток');
+      eq(core.minutesToTime(0), '00:00', 'минуты -> строка');
+      eq(core.minutesToTime(480), '08:00', '480 минут');
+      eq(core.formatDuration(90), '1 ч 30 мин', 'длительность 90 минут');
+      eq(core.isValidTime('25:00'), false, 'некорректное время отклоняется');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 2. Переход через полночь в форматировании
+     * ------------------------------------------------------------------ */
+    test('Время: значения за пределами суток заворачиваются', ({ eq }) => {
+      eq(core.minutesToTime(1470), '00:30', '1470 минут = 00:30 следующего дня');
+      eq(core.minutesToTime(1440), '00:00', 'ровно сутки = 00:00');
+      eq(core.minutesToTime(-30), '23:30', 'отрицательное значение');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 3. Ключи дат
+     * ------------------------------------------------------------------ */
+    test('Дата: ключ с ведущими нулями', ({ eq }) => {
+      eq(core.dateKeyFromParts(2026, 1, 5), '2026-01-05', 'январь');
+      eq(core.dateKeyFromParts(2026, 11, 2), '2026-11-02', 'ноябрь');
+      const parsed = core.parseDateKey('2026-11-02');
+      eq(parsed.y, 2026, 'год');
+      eq(parsed.m, 11, 'месяц');
+      eq(parsed.d, 2, 'день');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 4. Арифметика дат: границы месяца, года, високосный год
+     * ------------------------------------------------------------------ */
+    test('Дата: сдвиг через границы месяца и високосный год', ({ eq }) => {
+      eq(core.addDaysToKey('2026-01-31', 1), '2026-02-01', 'январь -> февраль');
+      eq(core.addDaysToKey('2026-03-01', -1), '2026-02-28', 'февраль не високосный');
+      eq(core.addDaysToKey('2026-12-31', 1), '2027-01-01', 'граница года');
+      eq(core.addDaysToKey('2024-02-28', 1), '2024-02-29', 'високосный февраль');
+      eq(core.addDaysToKey('2024-02-28', 2), '2024-03-01', 'после 29 февраля');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 5. День недели и границы недели
+     * ------------------------------------------------------------------ */
+    test('Дата: день недели (ISO) и границы недели', ({ eq }) => {
+      eq(core.weekdayFromKey('2026-11-02'), 1, '2 ноября 2026 — понедельник');
+      eq(core.weekdayFromKey('2026-11-08'), 7, '8 ноября 2026 — воскресенье');
+      eq(core.startOfWeekKey('2026-11-05'), '2026-11-02', 'начало недели — понедельник');
+      eq(core.endOfWeekKey('2026-11-05'), '2026-11-08', 'конец недели — воскресенье');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 6. Расписание по дням недели
+     * ------------------------------------------------------------------ */
+    test('Расписание: привычка попадает в свои дни', ({ eq }) => {
+      const workdays = habit('workdays', '13:00', 30, [1, 2, 3, 4, 5]);
+      const everyday = habit('everyday', '08:00', 15, [1, 2, 3, 4, 5, 6, 7]);
+      eq(core.isHabitScheduledForDate(workdays, '2026-11-02'), true, 'Пн–Пт в понедельник');
+      eq(core.isHabitScheduledForDate(workdays, '2026-11-07'), false, 'Пн–Пт в субботу');
+      eq(core.isHabitScheduledForDate(everyday, '2026-11-08'), true, 'каждый день в воскресенье');
+      eq(core.formatHabitDays(workdays), 'Пн–Пт', 'подпись расписания');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 7. Таймлайн дня: порядок и статусы
+     * ------------------------------------------------------------------ */
+    test('Таймлайн: сортировка по времени и статусы отметок', ({ eq }) => {
+      const state = makeState([
+        habit('evening', '20:00', 60, [1, 2, 3, 4, 5, 6, 7]),
+        habit('morning', '08:00', 15, [1, 2, 3, 4, 5, 6, 7]),
+        habit('noon', '13:00', 30, [1, 2, 3, 4, 5, 6, 7]),
+      ]);
+
+      const order = core.getScheduleForDate(state, TODAY, null).map((item) => item.habitId);
+      eq(order.join(','), 'morning,noon,evening', 'порядок по времени начала');
+
+      const first = core.getScheduleForDate(state, TODAY, null)[0];
+      eq(first.status, core.STATUS.PENDING, 'без отметки — ожидает');
+
+      const afterMark = core.markHabit(state, TODAY, 'morning', core.STATUS.DONE);
+      eq(afterMark.logs[TODAY].morning.status, core.STATUS.DONE, 'отметка записана');
+      eq(state.logs[TODAY], undefined, 'исходное состояние не изменилось (чистота)');
+
+      const entry = core.getScheduleForDate(afterMark, TODAY, null)[0];
+      eq(entry.status, core.STATUS.DONE, 'таймлайн видит отметку');
+      eq(entry.endTime, '08:15', 'время окончания посчитано');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 8. Переключатель отметок и сериализация
+     * ------------------------------------------------------------------ */
+    test('Отметки: переключатель статусов и round-trip JSON', ({ eq }) => {
+      const state = makeState([habit('charge', '08:00', 15, [1, 2, 3, 4, 5, 6, 7])]);
+
+      const done = core.toggleHabitStatus(state, TODAY, 'charge', core.STATUS.DONE);
+      eq(core.getStatus(done, TODAY, 'charge'), core.STATUS.DONE, 'первый клик — выполнено');
+
+      const cleared = core.toggleHabitStatus(done, TODAY, 'charge', core.STATUS.DONE);
+      eq(core.getStatus(cleared, TODAY, 'charge'), core.STATUS.PENDING, 'повторный клик снимает отметку');
+
+      const skipped = core.toggleHabitStatus(done, TODAY, 'charge', core.STATUS.SKIPPED);
+      eq(core.getStatus(skipped, TODAY, 'charge'), core.STATUS.SKIPPED, 'смена статуса');
+
+      const restored = core.deserialize(core.serialize(skipped));
+      eq(restored.logs[TODAY].charge.status, core.STATUS.SKIPPED, 'отметка выжила после JSON');
+      eq(restored.habits.length, 1, 'привычка выжила после JSON');
+      eq(restored.habits[0].title, 'charge', 'поля привычки сохранены');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 9. Серия: три дня подряд
+     * ------------------------------------------------------------------ */
+    test('Серия: три выполненных дня подряд = 3', ({ eq }) => {
+      const state = makeState(
+        [habit('charge', '08:00', 15, [1, 2, 3, 4, 5, 6, 7])],
+        {
+          '2026-11-02': { charge: { status: 'done', at: null } },
+          '2026-11-01': { charge: { status: 'done', at: null } },
+          '2026-10-31': { charge: { status: 'done', at: null } },
+        },
+      );
+      eq(core.getHabitStreak(state, 'charge', TODAY), 3, 'серия из трёх дней');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 10. Серия при пропуске
+     * ------------------------------------------------------------------ */
+    test('Серия: пропуск обрывает серию', ({ eq }) => {
+      const state = makeState(
+        [habit('charge', '08:00', 15, [1, 2, 3, 4, 5, 6, 7])],
+        {
+          '2026-11-02': { charge: { status: 'done', at: null } },
+          '2026-11-01': { charge: { status: 'skipped', at: null } },
+          '2026-10-31': { charge: { status: 'done', at: null } },
+          '2026-10-30': { charge: { status: 'done', at: null } },
+        },
+      );
+      eq(core.getHabitStreak(state, 'charge', TODAY), 1, 'серия остановилась на пропуске');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 11. Серия и дни вне расписания
+     * ------------------------------------------------------------------ */
+    test('Серия: выходные не рвут серию будних дней', ({ eq }) => {
+      const state = makeState(
+        [habit('read', '13:00', 30, [1, 2, 3, 4, 5])],
+        {
+          '2026-11-02': { read: { status: 'done', at: null } },   // понедельник
+          '2026-10-30': { read: { status: 'done', at: null } },   // пятница
+          '2026-10-29': { read: { status: 'done', at: null } },   // четверг
+          '2026-10-28': { read: { status: 'done', at: null } },   // среда
+          '2026-10-27': { read: { status: 'done', at: null } },   // вторник
+          '2026-10-26': { read: { status: 'done', at: null } },   // понедельник
+          '2026-10-23': { read: { status: 'skipped', at: null } }, // пятница — пропуск
+        },
+      );
+      // Суббота 31.10 и воскресенье 01.11 в расписании отсутствуют.
+      eq(core.getHabitStreak(state, 'read', TODAY), 6, 'шесть будних дней подряд');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 12. Статистика дня: процент выполнения и минуты
+     * ------------------------------------------------------------------ */
+    test('Статистика дня: 2 из 4 привычек = 50%', ({ eq }) => {
+      const state = makeState(
+        [
+          habit('a', '08:00', 15, [1, 2, 3, 4, 5, 6, 7]),
+          habit('b', '09:00', 30, [1, 2, 3, 4, 5, 6, 7]),
+          habit('c', '13:00', 45, [1, 2, 3, 4, 5, 6, 7]),
+          habit('d', '20:00', 60, [1, 2, 3, 4, 5, 6, 7]),
+        ],
+        {
+          '2026-11-02': {
+            a: { status: 'done', at: null },
+            b: { status: 'done', at: null },
+            c: { status: 'skipped', at: null },
+          },
+        },
+      );
+      const stats = core.getDayStats(state, TODAY);
+      eq(stats.planned, 4, 'запланировано привычек');
+      eq(stats.plannedMinutes, 150, 'запланировано минут');
+      eq(stats.done, 2, 'выполнено привычек');
+      eq(stats.doneMinutes, 45, 'выполнено минут');
+      eq(stats.completion, 50, 'процент выполнения');
+      eq(stats.kpi, 30, 'КПД = 45 / 150');
+      eq(stats.pending, 1, 'одна привычка осталась без отметки');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 13. КПД при нулевом плане
+     * ------------------------------------------------------------------ */
+    test('КПД при нулевом плане равен 0, а не NaN', ({ eq }) => {
+      const sundayOnly = makeState([habit('rest', '10:00', 60, [7])]);
+      const stats = core.getDayStats(sundayOnly, TODAY); // понедельник — плана нет
+      eq(stats.plannedMinutes, 0, 'план равен нулю');
+      eq(stats.kpi, 0, 'КПД равен нулю');
+      eq(Number.isNaN(stats.kpi), false, 'КПД не NaN');
+      eq(stats.completion, 0, 'процент выполнения равен нулю');
+
+      const empty = core.getRangeStats(core.createEmptyState(), '2026-11-01', '2026-11-02');
+      eq(empty.kpi, 0, 'пустое состояние даёт КПД 0');
+      eq(Number.isFinite(empty.kpi), true, 'значение конечно');
+      eq(core.getEfficiency(core.createEmptyState(), '2026-11-01', '2026-11-02'), 0, 'обёртка getEfficiency');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 14. Переход через полночь
+     * ------------------------------------------------------------------ */
+    test('Полночь: привычка 23:30 + 60 мин активна и после 00:00', ({ eq }) => {
+      const state = makeState([habit('night', '23:30', 60, [1, 2, 3, 4, 5, 6, 7])]);
+      const night = state.habits[0];
+      const entry = core.getScheduleForDate(state, TODAY, null)[0];
+
+      eq(entry.endTime, '00:30', 'окончание переходит на следующие сутки');
+      eq(entry.crossesMidnight, true, 'флаг перехода через полночь');
+      eq(core.isHabitActiveAt(night, 1425), true, '23:45 — выполняется');
+      eq(core.isHabitActiveAt(night, 15), true, '00:15 — ещё выполняется');
+      eq(core.isHabitActiveAt(night, 1400), false, '23:20 — ещё не началась');
+      eq(core.isHabitActiveAt(night, 60), false, '01:00 — уже закончилась');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * 15. Тихие часы и напоминания
+     * ------------------------------------------------------------------ */
+    test('Напоминания: тихие часы и момент срабатывания', ({ eq }) => {
+      const state = makeState(
+        [
+          habit('morning', '08:00', 15, [1, 2, 3, 4, 5, 6, 7]),
+          habit('early', '07:00', 15, [1, 2, 3, 4, 5, 6, 7]),
+        ],
+        {},
+        { reminderLeadMinutes: 10, quietFrom: '22:30', quietTo: '07:30' },
+      );
+
+      eq(core.isQuietTime(1350, '22:30', '07:30'), true, '22:30 — тихие часы');
+      eq(core.isQuietTime(30, '22:30', '07:30'), true, '00:30 — тихие часы (после полуночи)');
+      eq(core.isQuietTime(720, '22:30', '07:30'), false, '12:00 — не тихие часы');
+
+      const morning = state.habits[0];
+      const early = state.habits[1];
+
+      eq(core.shouldRemind(morning, TODAY, 470, state).reason, 'due', '07:50 — пора напомнить');
+      eq(core.shouldRemind(morning, TODAY, 400, state).reason, 'too-early', '06:40 — ещё рано');
+      eq(core.shouldRemind(early, TODAY, 410, state).reason, 'quiet-hours', 'напоминание в тихие часы отменяется');
+
+      const withLog = core.markHabit(state, TODAY, 'morning', core.STATUS.DONE);
+      eq(core.shouldRemind(morning, TODAY, 470, withLog).reason, 'already-logged', 'выполненную не напоминаем');
+
+      const reminders = core.collectReminders(state, TODAY);
+      eq(reminders.length, 1, 'в очередь попала только одна привычка');
+      eq(reminders[0].habitId, 'morning', 'утренняя привычка');
+      eq(reminders[0].atTime, '07:50', 'время напоминания с учётом запаса');
+    });
+
+    /* ------------------------------------------------------------------ *
+     * Прогон и отображение
+     * ------------------------------------------------------------------ */
+
+    function runAll() {
+      const results = tests.map((item, index) => {
+        const errors = [];
+        const eq = (actual, expected, message) => {
+          if (actual !== expected) {
+            errors.push(`${message}: ожидалось ${JSON.stringify(expected)}, получено ${JSON.stringify(actual)}`);
+          }
+        };
+        const assert = (condition, message) => {
+          if (!condition) errors.push(message);
+        };
+        try {
+          item.fn({ eq, assert });
+        } catch (error) {
+          errors.push(`Исключение: ${error.message}`);
+        }
+        return { index: index + 1, name: item.name, errors };
+      });
+
+      const list = document.getElementById('list');
+      list.innerHTML = results.map((result) => `
+        <li class="${result.errors.length ? 'fail' : 'pass'}">
+          <div class="num">${result.index}</div>
+          <div>
+            <div class="name">${result.name}
+              <span class="badge">${result.errors.length ? 'ОШИБКА' : 'ОК'}</span>
+            </div>
+            ${result.errors.length
+              ? `<ul class="errors">${result.errors.map((error) => `<li>${error}</li>`).join('')}</ul>`
+              : ''}
+          </div>
+        </li>`).join('');
+
+      const passed = results.filter((result) => !result.errors.length).length;
+      const summary = document.getElementById('summary');
+      document.getElementById('summary-value').textContent = `${passed}/${results.length}`;
+      document.getElementById('summary-text').textContent = passed === results.length
+        ? 'Все проверки ядра пройдены — логика работает корректно.'
+        : `Провалено проверок: ${results.length - passed}. Подробности ниже.`;
+      summary.classList.add(passed === results.length ? 'summary--ok' : 'summary--err');
+
+      // Дублируем итог в консоль — удобно смотреть в DevTools.
+      console.log(`[tests] ${passed}/${results.length}`, results);
+    }
+
+    runAll();
+  </script>
+</body>
+</html>

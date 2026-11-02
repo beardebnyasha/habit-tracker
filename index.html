@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Трекер КПД</title>
+  <meta name="description" content="Трекер привычек с расчётом серии, процента выполнения и КПД. Работает офлайн, можно установить на телефон.">
+
+  <meta name="theme-color" content="#eef2f8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="КПД">
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <h1 id="header-title">Трекер КПД</h1>
+        <p id="header-subtitle">Загрузка…</p>
+      </div>
+    </header>
+
+    <!-- Сюда ui.js рисует активный экран -->
+    <main id="app" aria-live="polite"></main>
+
+    <nav id="tabbar" class="tabbar" role="tablist" aria-label="Разделы">
+      <button type="button" role="tab" data-tab="today" aria-selected="true">
+        <span aria-hidden="true">◷</span><span>Сегодня</span>
+      </button>
+      <button type="button" role="tab" data-tab="stats" aria-selected="false">
+        <span aria-hidden="true">▤</span><span>Статистика</span>
+      </button>
+      <button type="button" role="tab" data-tab="habits" aria-selected="false">
+        <span aria-hidden="true">☰</span><span>Привычки</span>
+      </button>
+      <button type="button" role="tab" data-tab="settings" aria-selected="false">
+        <span aria-hidden="true">⚙</span><span>Настройки</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+  <noscript>
+    <p style="padding:16px">Для работы трекера нужен включённый JavaScript.</p>
+  </noscript>
+
+  <!-- Единственная точка входа: ui.js подтягивает core.js, storage.js, notifier.js -->
+  <script type="module" src="js/ui.js"></script>
+</body>
+</html>
